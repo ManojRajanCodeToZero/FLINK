@@ -1,0 +1,59 @@
+package org.example;
+
+import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+import org.apache.flink.util.Collector;
+
+
+public class Main {
+    public static void main(String[] args) {
+        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        System.out.println("ENV - "+env);
+
+        ParameterTool params = ParameterTool.fromArgs(args);
+        env.getConfig().setGlobalJobParameters(params);
+
+        DataStream<String> text = env.fromData(params.get("INPUT"));
+//        SingleOutputStreamOperator<String> filtered = text.setParallelism(2).filter(new FilterFunction<String>() {
+//            @Override
+//            public boolean filter(String s) throws Exception {
+//                return s.startsWith("D");
+//            }
+//        });
+
+        DataStream<String> tokenized = text.flatMap(new FlatMapFunction<String, String>() {
+            @Override
+            public void flatMap(String s, Collector<String> collector) throws Exception {
+                String[] tokens = s.split("\\W+");
+                for(String token: tokens){
+                    collector.collect(token);
+                }
+            }
+        });
+
+        DataStream<Tuple2<String, Integer>> tokenCounts = tokenized.keyBy((s)-> s).process(new KeyedProcessFunction<String, String, Tuple2<String, Integer>>() {
+
+            private transient ValueState<Integer> count;
+
+            @Override
+            public void processElement(String s, KeyedProcessFunction<String, String, Tuple2<String, Integer>>.Context context, Collector<Tuple2<String, Integer>> collector) throws Exception {
+                int currentCount = count.value() ==null?1:1+count.value();
+
+                count.update(currentCount);
+                collector.collect(new Tuple2<>(s,currentCount));
+            }
+        });
+
+        tokenCounts.flatMap(
+                (stringIntegerTuple2, collector) -> {
+                    System.out.println("Word: "+stringIntegerTuple2+" - "+collector.toString());
+                }
+        );
+    }
+}
